@@ -207,7 +207,7 @@ public class CheckpointEntryIterator
                 type = schemaManager.getTxnEntryType();
                 break;
             case ADD:
-                type = schemaManager.getAddEntryType(metadataEntry);
+                type = schemaManager.getAddEntryType(metadataEntry, true, true);
                 break;
             case REMOVE:
                 type = schemaManager.getRemoveEntryType();

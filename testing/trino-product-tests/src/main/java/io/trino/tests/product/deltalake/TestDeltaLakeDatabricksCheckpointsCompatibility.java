@@ -31,6 +31,7 @@ import static com.google.common.collect.Iterables.getOnlyElement;
 import static io.trino.tempto.assertions.QueryAssert.Row.row;
 import static io.trino.tempto.assertions.QueryAssert.assertThat;
 import static io.trino.tests.product.TestGroups.DELTA_LAKE_DATABRICKS;
+import static io.trino.tests.product.TestGroups.DELTA_LAKE_EXCLUDE_73;
 import static io.trino.tests.product.TestGroups.PROFILE_SPECIFIC_TESTS;
 import static io.trino.tests.product.deltalake.TransactionLogAssertions.assertLastEntryIsCheckpointed;
 import static io.trino.tests.product.deltalake.TransactionLogAssertions.assertTransactionLogVersion;
@@ -207,7 +208,7 @@ public class TestDeltaLakeDatabricksCheckpointsCompatibility
                                 "  'Type' = 'EXTERNAL',\n" +
                                 "  'delta.checkpointInterval' = '3',\n" +
                                 "  'delta.minReaderVersion' = '1',\n" +
-                                "  'delta.minWriterVersion' = '2')\n",
+                                "  'delta.minWriterVersion' = '3')\n",
                         tableName,
                         bucketName,
                         tableDirectory);
@@ -374,6 +375,91 @@ public class TestDeltaLakeDatabricksCheckpointsCompatibility
         }
         finally {
             // cleanup
+            onDelta().executeQuery("DROP TABLE default." + tableName);
+        }
+    }
+
+    @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_EXCLUDE_73, PROFILE_SPECIFIC_TESTS})
+    public void testTrinoWriteStatsAsJsonDisabled()
+    {
+        String tableName = "test_dl_checkpoints_write_stats_as_json_disabled_trino_" + randomTableSuffix();
+        testWriteStatsAsJsonDisabled(sql -> onTrino().executeQuery(sql), tableName, "delta.default." + tableName);
+    }
+
+    @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_EXCLUDE_73, PROFILE_SPECIFIC_TESTS})
+    public void testDatabricksWriteStatsAsJsonDisabled()
+    {
+        String tableName = "test_dl_checkpoints_write_stats_as_json_disabled_databricks_" + randomTableSuffix();
+        testWriteStatsAsJsonDisabled(sql -> onDelta().executeQuery(sql), tableName, "default." + tableName);
+    }
+
+    private void testWriteStatsAsJsonDisabled(Consumer<String> sqlExecutor, String tableName, String qualifiedTableName)
+    {
+        onDelta().executeQuery(format(
+                "CREATE TABLE default.%s" +
+                        "(a_number INT, a_string STRING) " +
+                        "USING DELTA " +
+                        "PARTITIONED BY (a_number) " +
+                        "LOCATION 's3://%s/databricks-compatibility-test-%1$s' " +
+                        "TBLPROPERTIES (" +
+                        " delta.checkpointInterval = 5, " +
+                        " delta.minWriterVersion = 3, " +
+                        " delta.checkpoint.writeStatsAsJson = false)",
+                tableName, bucketName));
+
+        try {
+            sqlExecutor.accept("INSERT INTO " + qualifiedTableName + " VALUES (1,'ala')");
+
+            assertThat(onTrino().executeQuery("SHOW STATS FOR delta.default." + tableName))
+                    .containsOnly(ImmutableList.of(
+                            row("a_number", null, 1.0, 0.0, null, null, null),
+                            row("a_string", null, null, 0.0, null, null, null),
+                            row(null, null, null, null, 1.0, null, null)));
+        }
+        finally {
+            onDelta().executeQuery("DROP TABLE default." + tableName);
+        }
+    }
+
+    @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_EXCLUDE_73, PROFILE_SPECIFIC_TESTS})
+    public void testTrinoWriteStatsAsStructDisabled()
+    {
+        String tableName = "test_dl_checkpoints_write_stats_as_struct_disabled_trino_" + randomTableSuffix();
+        testWriteStatsAsStructDisabled(sql -> onTrino().executeQuery(sql), tableName, "delta.default." + tableName);
+    }
+
+    @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_EXCLUDE_73, PROFILE_SPECIFIC_TESTS})
+    public void testDatabricksWriteStatsAsStructDisabled()
+    {
+        String tableName = "test_dl_checkpoints_write_stats_as_struct_disabled_databricks_" + randomTableSuffix();
+        testWriteStatsAsStructDisabled(sql -> onDelta().executeQuery(sql), tableName, "default." + tableName);
+    }
+
+    private void testWriteStatsAsStructDisabled(Consumer<String> sqlExecutor, String tableName, String qualifiedTableName)
+    {
+        onDelta().executeQuery(format(
+                "CREATE TABLE default.%s" +
+                        "(a_number INT, a_string STRING) " +
+                        "USING DELTA " +
+                        "PARTITIONED BY (a_number) " +
+                        "LOCATION 's3://%s/databricks-compatibility-test-%1$s' " +
+                        "TBLPROPERTIES (" +
+                        " delta.checkpointInterval = 1, " +
+                        " delta.minWriterVersion = 3, " +
+                        " delta.checkpoint.writeStatsAsJson = false, " + // Disable json stats to avoid merging statistics with 'stats' field
+                        " delta.checkpoint.writeStatsAsStruct = false)",
+                tableName, bucketName));
+
+        try {
+            sqlExecutor.accept("INSERT INTO " + qualifiedTableName + " VALUES (1,'ala')");
+
+            assertThat(onTrino().executeQuery("SHOW STATS FOR delta.default." + tableName))
+                    .containsOnly(ImmutableList.of(
+                            row("a_number", null, null, null, null, null, null),
+                            row("a_string", null, null, null, null, null, null),
+                            row(null, null, null, null, null, null, null)));
+        }
+        finally {
             onDelta().executeQuery("DROP TABLE default." + tableName);
         }
     }

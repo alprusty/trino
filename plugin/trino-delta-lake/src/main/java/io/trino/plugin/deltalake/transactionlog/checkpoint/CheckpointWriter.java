@@ -50,6 +50,8 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static io.airlift.slice.Slices.utf8Slice;
 import static io.trino.plugin.deltalake.DeltaLakeSchemaProperties.buildHiveSchema;
+import static io.trino.plugin.deltalake.transactionlog.MetadataEntry.DELTA_CHECKPOINT_WRITE_STATS_AS_JSON_PROPERTY;
+import static io.trino.plugin.deltalake.transactionlog.MetadataEntry.DELTA_CHECKPOINT_WRITE_STATS_AS_STRUCT_PROPERTY;
 import static io.trino.plugin.hive.HiveCompressionCodec.SNAPPY;
 import static io.trino.plugin.hive.HiveStorageFormat.PARQUET;
 import static io.trino.plugin.hive.metastore.StorageFormat.fromHiveStorageFormat;
@@ -85,10 +87,13 @@ public class CheckpointWriter
 
     public void write(ConnectorSession session, CheckpointEntries entries, Path targetPath)
     {
+        boolean writeStatsAsJson = Boolean.parseBoolean(entries.getMetadataEntry().getConfiguration().getOrDefault(DELTA_CHECKPOINT_WRITE_STATS_AS_JSON_PROPERTY, "true"));
+        boolean writeStatsAsStruct = Boolean.parseBoolean(entries.getMetadataEntry().getConfiguration().getOrDefault(DELTA_CHECKPOINT_WRITE_STATS_AS_STRUCT_PROPERTY, "false"));
+
         RowType metadataEntryType = checkpointSchemaManager.getMetadataEntryType();
         RowType protocolEntryType = checkpointSchemaManager.getProtocolEntryType();
         RowType txnEntryType = checkpointSchemaManager.getTxnEntryType();
-        RowType addEntryType = checkpointSchemaManager.getAddEntryType(entries.getMetadataEntry());
+        RowType addEntryType = checkpointSchemaManager.getAddEntryType(entries.getMetadataEntry(), writeStatsAsJson, writeStatsAsStruct);
         RowType removeEntryType = checkpointSchemaManager.getRemoveEntryType();
 
         List<String> columnNames = ImmutableList.of(
@@ -129,7 +134,7 @@ public class CheckpointWriter
             writeTransactionEntry(pageBuilder, txnEntryType, transactionEntry);
         }
         for (AddFileEntry addFileEntry : entries.getAddFileEntries()) {
-            writeAddFileEntry(pageBuilder, addEntryType, addFileEntry);
+            writeAddFileEntry(pageBuilder, addEntryType, addFileEntry, writeStatsAsJson, writeStatsAsStruct);
         }
         for (RemoveFileEntry removeFileEntry : entries.getRemoveFileEntries()) {
             writeRemoveFileEntry(pageBuilder, removeEntryType, removeFileEntry);
@@ -192,41 +197,42 @@ public class CheckpointWriter
         appendNullOtherBlocks(pageBuilder, TXN_BLOCK_CHANNEL);
     }
 
-    private void writeAddFileEntry(PageBuilder pageBuilder, RowType entryType, AddFileEntry addFileEntry)
+    private void writeAddFileEntry(PageBuilder pageBuilder, RowType entryType, AddFileEntry addFileEntry, boolean writeStatsAsJson, boolean writeStatsAsStruct)
     {
         pageBuilder.declarePosition();
         BlockBuilder blockBuilder = pageBuilder.getBlockBuilder(ADD_BLOCK_CHANNEL);
         BlockBuilder entryBlockBuilder = blockBuilder.beginBlockEntry();
-        writeString(entryBlockBuilder, entryType, 0, "path", addFileEntry.getPath());
-        writeStringMap(entryBlockBuilder, entryType, 1, "partitionValues", addFileEntry.getPartitionValues());
-        writeLong(entryBlockBuilder, entryType, 2, "size", addFileEntry.getSize());
-        writeLong(entryBlockBuilder, entryType, 3, "modificationTime", addFileEntry.getModificationTime());
-        writeBoolean(entryBlockBuilder, entryType, 4, "dataChange", addFileEntry.isDataChange());
-        // TODO: determine stats format in checkpoint based on table configuration; (https://github.com/trinodb/trino/issues/12031)
-        // currently if addFileEntry contains JSON stats we will write JSON
-        // stats to checkpoint and if addEntryFile contains parsed stats, we
-        // will write parsed stats to the checkpoint.
-        writeJsonStats(entryBlockBuilder, entryType, addFileEntry);
-        writeParsedStats(entryBlockBuilder, entryType, addFileEntry);
-        writeStringMap(entryBlockBuilder, entryType, 7, "tags", addFileEntry.getTags());
+        int fieldId = 0;
+        writeString(entryBlockBuilder, entryType, fieldId++, "path", addFileEntry.getPath());
+        writeStringMap(entryBlockBuilder, entryType, fieldId++, "partitionValues", addFileEntry.getPartitionValues());
+        writeLong(entryBlockBuilder, entryType, fieldId++, "size", addFileEntry.getSize());
+        writeLong(entryBlockBuilder, entryType, fieldId++, "modificationTime", addFileEntry.getModificationTime());
+        writeBoolean(entryBlockBuilder, entryType, fieldId++, "dataChange", addFileEntry.isDataChange());
+        if (writeStatsAsJson) {
+            writeJsonStats(entryBlockBuilder, entryType, addFileEntry, fieldId++);
+        }
+        if (writeStatsAsStruct) {
+            writeParsedStats(entryBlockBuilder, entryType, addFileEntry, fieldId++);
+        }
+        writeStringMap(entryBlockBuilder, entryType, fieldId++, "tags", addFileEntry.getTags());
         blockBuilder.closeEntry();
 
         // null for others
         appendNullOtherBlocks(pageBuilder, ADD_BLOCK_CHANNEL);
     }
 
-    private void writeJsonStats(BlockBuilder entryBlockBuilder, RowType entryType, AddFileEntry addFileEntry)
+    private void writeJsonStats(BlockBuilder entryBlockBuilder, RowType entryType, AddFileEntry addFileEntry, int fieldId)
     {
         String statsJson = null;
         if (addFileEntry.getStats().isPresent() && addFileEntry.getStats().get() instanceof DeltaLakeJsonFileStatistics) {
             statsJson = addFileEntry.getStatsString().orElse(null);
         }
-        writeString(entryBlockBuilder, entryType, 5, "stats", statsJson);
+        writeString(entryBlockBuilder, entryType, fieldId, "stats", statsJson);
     }
 
-    private void writeParsedStats(BlockBuilder entryBlockBuilder, RowType entryType, AddFileEntry addFileEntry)
+    private void writeParsedStats(BlockBuilder entryBlockBuilder, RowType entryType, AddFileEntry addFileEntry, int fieldId)
     {
-        RowType statsType = getInternalRowType(entryType, 6, "stats_parsed");
+        RowType statsType = getInternalRowType(entryType, fieldId, "stats_parsed");
         if (addFileEntry.getStats().isEmpty() || !(addFileEntry.getStats().get() instanceof DeltaLakeParquetFileStatistics)) {
             entryBlockBuilder.appendNull();
             return;

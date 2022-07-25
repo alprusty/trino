@@ -120,6 +120,7 @@ public class TestCheckpointWriter
                         "{\"name\":\"s2\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]}",
                 ImmutableList.of("part_key"),
                 ImmutableMap.of(
+                        "delta.checkpoint.writeStatsAsStruct", "true",
                         "configOption1", "blah",
                         "configOption2", "plah"),
                 1000);
@@ -296,7 +297,7 @@ public class TestCheckpointWriter
                         "[{\"name\":\"row\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"s1\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}," +
                         "{\"name\":\"s2\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]}",
                 ImmutableList.of(),
-                ImmutableMap.of(),
+                ImmutableMap.of("delta.checkpoint.writeStatsAsStruct", "true"),
                 1000);
         ProtocolEntry protocolEntry = new ProtocolEntry(10, 20);
         Block[] minMaxRowFieldBlocks = new Block[]{

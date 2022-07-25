@@ -305,6 +305,6 @@ public class TestDeltaLakeDatabricksCreateTableCompatibility
         return "TBLPROPERTIES (\n" +
                 "  'Type' = 'EXTERNAL',\n" +
                 "  'delta.minReaderVersion' = '1',\n" +
-                "  'delta.minWriterVersion' = '2')\n";
+                "  'delta.minWriterVersion' = '3')\n";
     }
 }
