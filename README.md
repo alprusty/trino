@@ -55,6 +55,7 @@ to run, and are thus disabled by the above command. These tests are run by the
 CI system when you submit a pull request. We recommend only running tests
 locally for the areas of code that you change.
 
+
 ## Running Trino in your IDE
 
 ### Overview
